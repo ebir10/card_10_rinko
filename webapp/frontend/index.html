@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>10を作るカードゲーム</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <h1>10を作るカードゲーム</h1>
+    <p class="subtitle">
+      カードを画像処理(古典的CV / YOLOv8)でランクを判別し、読み取った数字から
+      四則演算で目標値を作ります。
+    </p>
+
+    <section class="controls">
+      <label>
+        認識エンジン
+        <select id="engine">
+          <option value="yolo" selected>YOLOv8(既存学習済みモデル)</option>
+          <option value="classical">古典的CV(テンプレートマッチング)</option>
+        </select>
+      </label>
+      <label>
+        枚数
+        <select id="count">
+          <option value="4" selected>4</option>
+          <option value="3">3</option>
+          <option value="5">5</option>
+        </select>
+      </label>
+      <label>
+        撮影条件
+        <select id="condition">
+          <option value="normal" selected>通常</option>
+          <option value="tilt">傾き</option>
+          <option value="light">照明変化</option>
+        </select>
+      </label>
+      <label>
+        目標の数
+        <input id="target" type="number" value="10" min="1" max="999" />
+      </label>
+      <button id="draw-btn">カードを引く</button>
+    </section>
+
+    <section id="status" class="status" hidden></section>
+
+    <section id="cards" class="cards" hidden></section>
+
+    <section id="result" class="result" hidden></section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

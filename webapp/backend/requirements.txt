@@ -1,0 +1,9 @@
+# webapp用の追加依存(プロジェクトルートのrequirements.txtに追記する形でも可)
+fastapi
+uvicorn[standard]
+
+# 以下はプロジェクトルートの requirements.txt で既にインストール済みのはず
+# opencv-python
+# numpy
+# pillow
+# ultralytics

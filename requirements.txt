@@ -1,0 +1,8 @@
+# --- 共通(prepare_deck.py / classify.py / make_ten.py など) ---
+opencv-python
+numpy
+pillow
+
+# --- YOLOv8手法 (classify_yolo.py) を使う場合のみ必要 ---
+# torch は ultralytics のインストール時にCPU版が自動で入ります。
+ultralytics
