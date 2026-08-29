@@ -1,8 +1,0 @@
-INFO:     127.0.0.1:51947 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60483 - "GET /api/draw?engine=classical&count=2&seed=1&condition=normal HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60483 - "GET /images/normal/H10.png HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60483 - "GET /api/draw?engine=classical&count=2&seed=1&condition=tilt HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60483 - "GET /images/tilt/H10.png HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60483 - "GET /api/draw?engine=classical&count=2&seed=1&condition=light HTTP/1.1" 200 OK
-INFO:     127.0.0.1:60483 - "GET /images/light/H10.png HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62160 - "GET /api/draw?condition=bogus HTTP/1.1" 422 Unprocessable Entity
