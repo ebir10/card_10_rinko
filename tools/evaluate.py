@@ -26,6 +26,10 @@ mAP は使わない。理由:
     python tools/evaluate.py --engine classical
     python tools/evaluate.py --engine yolo
     python tools/evaluate.py --engine both --save-json results/comparison.json
+
+--target suit でスート(C/S/D/H)の判別精度も同じ枠組みで評価できる
+(既定は --target rank で、従来通りランクのみを評価する)。
+    python tools/evaluate.py --engine both --target suit --save-json results/comparison_suit.json
 """
 from __future__ import annotations
 
@@ -39,7 +43,15 @@ from typing import Callable
 # tools/ の親(プロジェクトルート)を import パスに追加する
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common import DEFAULT_DECK_DIR, DEFAULT_TEMPLATE_DIR, RANKS, UNKNOWN, load_dataset
+from common import DEFAULT_DECK_DIR, DEFAULT_TEMPLATE_DIR, RANKS, SUITS, UNKNOWN, CardImage, load_dataset
+
+# 評価対象: "rank" (既定, 従来通り) / "suit" (新規)。
+# ラベル一覧・正解ラベルの取り方・使う predict_* 関数がこれで決まる。
+TARGET_LABELS: dict[str, tuple[str, ...]] = {"rank": RANKS, "suit": SUITS}
+TARGET_TRUE_LABEL: dict[str, Callable[[CardImage], str]] = {
+    "rank": lambda item: item.rank,
+    "suit": lambda item: item.suit,
+}
 
 
 # --- 評価ロジック ------------------------------------------------------------
@@ -115,19 +127,24 @@ class EvalResult:
         return sum(f1s) / len(f1s) if f1s else 0.0
 
 
-def run_eval(name: str, predict_rank: Callable[[Path], str | None], deck_dir: Path) -> EvalResult:
+def run_eval(
+    name: str,
+    predict_fn: Callable[[Path], str | None],
+    deck_dir: Path,
+    true_label_fn: Callable[[CardImage], str] = TARGET_TRUE_LABEL["rank"],
+) -> EvalResult:
     items = load_dataset(deck_dir)
     result = EvalResult(name)
     for item in items:
         start = time.perf_counter()
-        pred = predict_rank(item.path)
+        pred = predict_fn(item.path)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        result.add(item.rank, pred, elapsed_ms)
+        result.add(true_label_fn(item), pred, elapsed_ms)
     return result
 
 
-def print_report(result: EvalResult) -> None:
-    labels = list(RANKS)
+def print_report(result: EvalResult, labels: list[str] | None = None) -> None:
+    labels = labels if labels is not None else list(RANKS)
     print(f"\n=== {result.name} ===")
     print(f"  ランク正解率 (accuracy)  : {result.accuracy:.3f}  ({result.n_correct}/{result.n})")
     print(f"  マクロF1                : {result.macro_f1(labels):.3f}")
@@ -140,8 +157,8 @@ def print_report(result: EvalResult) -> None:
         print(f"    {label:>3}: precision={p:.2f} recall={r:.2f} f1={f1:.2f} (support={support})")
 
 
-def print_comparison(results: list[EvalResult]) -> None:
-    labels = list(RANKS)
+def print_comparison(results: list[EvalResult], labels: list[str] | None = None) -> None:
+    labels = labels if labels is not None else list(RANKS)
     print("\n" + "=" * 70)
     print(f"比較サマリー (E: 全{results[0].n}枚, 主指標=ランク正解率)")
     print("=" * 70)
@@ -150,8 +167,8 @@ def print_comparison(results: list[EvalResult]) -> None:
         print(f"{r.name:<42} {r.accuracy:>9.3f} {r.macro_f1(labels):>8.3f} {r.n_unknown:>8d} {r.mean_inference_ms:>10.2f}")
 
 
-def result_to_dict(result: EvalResult) -> dict:
-    labels = list(RANKS)
+def result_to_dict(result: EvalResult, labels: list[str] | None = None) -> dict:
+    labels = labels if labels is not None else list(RANKS)
     return {
         "name": result.name,
         "n": result.n,
@@ -173,6 +190,7 @@ def result_to_dict(result: EvalResult) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--engine", choices=("classical", "yolo", "both"), default="both")
+    parser.add_argument("--target", choices=("rank", "suit"), default="rank", help="評価対象: rank(既定, 従来通り) / suit(新規)")
     parser.add_argument("--deck-dir", type=Path, default=DEFAULT_DECK_DIR, help="E: 評価用画像フォルダ")
     parser.add_argument("--template-dir", type=Path, default=DEFAULT_TEMPLATE_DIR, help="T: 古典CVのテンプレート元フォルダ")
     parser.add_argument("--save-json", type=Path, default=None, help="結果をJSONで保存するパス")
@@ -182,14 +200,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"エラー: E(評価用)フォルダが見つかりません: {args.deck_dir}", file=sys.stderr)
         return 1
 
+    labels = list(TARGET_LABELS[args.target])
+    true_label_fn = TARGET_TRUE_LABEL[args.target]
+    name_suffix = "" if args.target == "rank" else " [suit]"
+
     results: list[EvalResult] = []
 
     if args.engine in ("classical", "both"):
         import classify
         classify.configure(args.template_dir)
-        print(f"[古典的CV手法] 評価中... (テンプレート元 T = {args.template_dir})")
-        result = run_eval(classify.__name__ + " (OpenCV template matching)", classify.predict_rank, args.deck_dir)
-        print_report(result)
+        predict_fn = classify.predict_rank if args.target == "rank" else classify.predict_suit
+        print(f"[古典的CV手法] 評価中... (対象={args.target}, テンプレート元 T = {args.template_dir})")
+        result = run_eval(classify.__name__ + " (OpenCV template matching)" + name_suffix, predict_fn, args.deck_dir, true_label_fn)
+        print_report(result, labels)
         results.append(result)
 
     if args.engine in ("yolo", "both"):
@@ -198,17 +221,18 @@ def main(argv: list[str] | None = None) -> int:
         except ImportError as e:
             print(f"\n[YOLOv8手法] スキップ: {e}", file=sys.stderr)
         else:
-            print("\n[YOLOv8手法] 評価中... (既存データセット学習済みモデル, ゼロショット)")
-            result = run_eval(classify_yolo.__name__, classify_yolo.predict_rank, args.deck_dir)
-            print_report(result)
+            predict_fn = classify_yolo.predict_rank if args.target == "rank" else classify_yolo.predict_suit
+            print(f"\n[YOLOv8手法] 評価中... (対象={args.target}, 既存データセット学習済みモデル, ゼロショット)")
+            result = run_eval(classify_yolo.__name__ + name_suffix, predict_fn, args.deck_dir, true_label_fn)
+            print_report(result, labels)
             results.append(result)
 
     if len(results) > 1:
-        print_comparison(results)
+        print_comparison(results, labels)
 
     if args.save_json:
         args.save_json.parent.mkdir(parents=True, exist_ok=True)
-        payload = [result_to_dict(r) for r in results]
+        payload = [result_to_dict(r, labels) for r in results]
         args.save_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\n結果を保存しました: {args.save_json}")
 

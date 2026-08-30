@@ -1,12 +1,14 @@
-"""OpenCVによる古典的な画像処理(テンプレートマッチング)でカードのランクを
-判別するモジュール。
+"""OpenCVによる古典的な画像処理(テンプレートマッチング)でカードのランク・
+スートを判別するモジュール。
 
-公開インターフェースは1関数だけ:
+公開インターフェースは2関数:
 
     def predict_rank(image_path: Path) -> str | None
+    def predict_suit(image_path: Path) -> str | None
 
-classify_yolo.py と全く同じシグネチャにすることで、tools/evaluate.py を
-1本で共通化し、比較の公平性をコードレベルで保証する。
+predict_rank は classify_yolo.py と全く同じシグネチャにすることで、
+tools/evaluate.py を1本で共通化し、比較の公平性をコードレベルで保証する
+(この契約はスート対応を追加した後も変更していない)。
 
 テンプレートは data/template_src/ (T セット) から作る。
 data/deck/ (E セット、評価専用)は一切参照しない。
@@ -17,17 +19,23 @@ data/deck/ (E セット、評価専用)は一切参照しない。
     2. 残った最大の輪郭をカードとみなし、minAreaRect + 射影変換で
        正立・正規サイズの画像に補正する
     3. 左上コーナー(ランクが上段・スートマークが下段というトランプ共通の
-       レイアウト)から、輪郭のy位置クラスタリングでランク文字だけを抽出する
-    4. T セットから作った「ランクごとのテンプレート画像」との
-       正規化相互相関(cv2.matchTemplate)が最大のランクを予測する
+       レイアウト)から、輪郭のy位置クラスタリングで「行」に分ける。
+       行0をランク文字、行1をスートマークとして扱う(実際に52枚で
+       確認した限り、通常はこの2行にきれいに分かれる。まれに行同士が
+       融合して1行になることがあり、その場合スートは検出不能=Noneになる)。
+    4. T セットから作った「ランク/スートごとのテンプレート画像」との
+       正規化相互相関(cv2.matchTemplate)が最大のものを予測する
+       (テンプレート作成そのものは build_templates()/build_suit_templates()
+       が共通の _build_glyph_templates() を呼ぶ形に統一している)
 
-カードやランク文字を検出できなかった場合は None(=UNKNOWN)を返す。
-これは classify_yolo.py が検出0件のときに None を返すのと同じ扱いであり、
-tools/evaluate.py はこの2つを区別せず同一のUNKNOWN扱いで集計する。
+カードやランク文字/スートマークを検出できなかった場合は None(=UNKNOWN)を
+返す。これは classify_yolo.py が検出0件のときに None を返すのと同じ扱いで
+あり、tools/evaluate.py はこの2つを区別せず同一のUNKNOWN扱いで集計する。
 """
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -41,10 +49,17 @@ MIN_GLYPH_AREA = 20                # 文字とみなす輪郭の最小面積(px)
 MAX_GLYPH_HEIGHT_FRAC = 0.6        # 文字とみなす輪郭の最大高さ(コーナー高さに対する割合)。
                                     # 絵札の枠線などコーナーの縦幅いっぱいに伸びる装飾線を除外する
 ROW_GAP_TOL = 6                    # 同じ行とみなすy方向の許容ギャップ(px)
-GLYPH_SIZE = (48, 64)              # テンプレート化する際の統一サイズ (w,h)
+GLYPH_SIZE = (48, 64)              # ランクをテンプレート化する際の統一サイズ (w,h)。数字/文字は縦長。
+SUIT_GLYPH_SIZE = (48, 48)         # スートマークをテンプレート化する際の統一サイズ (w,h)。
+                                    # ハート/ダイヤ/クラブ/スペードは実測でおよそ正方形に近いため
+                                    # ランクとは別サイズにしている。
+
+RANK_ROW_INDEX = 0                 # コーナー内の行のうち、ランク文字とみなす行番号
+SUIT_ROW_INDEX = 1                 # 同、スートマークとみなす行番号
 
 _TEMPLATE_DIR: Path = DEFAULT_TEMPLATE_DIR
 _TEMPLATE_CACHE: dict[str, np.ndarray] | None = None
+_SUIT_TEMPLATE_CACHE: dict[str, np.ndarray] | None = None
 
 
 class CardNotFoundError(RuntimeError):
@@ -133,7 +148,9 @@ def _glyph_rows(binary: np.ndarray) -> list[list[tuple[int, int, int, int]]]:
     return rows
 
 
-def _normalize_glyph(binary: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> np.ndarray:
+def _normalize_glyph(
+    binary: np.ndarray, boxes: list[tuple[int, int, int, int]], size: tuple[int, int] = GLYPH_SIZE
+) -> np.ndarray:
     xs0 = min(b[0] for b in boxes)
     ys0 = min(b[1] for b in boxes)
     xs1 = max(b[0] + b[2] for b in boxes)
@@ -143,35 +160,60 @@ def _normalize_glyph(binary: np.ndarray, boxes: list[tuple[int, int, int, int]])
     xs1 = min(binary.shape[1], xs1 + pad)
     ys1 = min(binary.shape[0], ys1 + pad)
     crop = binary[ys0:ys1, xs0:xs1]
-    return cv2.resize(crop, GLYPH_SIZE, interpolation=cv2.INTER_AREA)
+    return cv2.resize(crop, size, interpolation=cv2.INTER_AREA)
+
+
+def _corner_binary(card: np.ndarray) -> np.ndarray:
+    """正立済みカードから左上コーナーを切り出し、二値化する(ランク/スート共通の前処理)。"""
+    h, w = card.shape[:2]
+    corner = card[0:int(h * CORNER_H_FRAC), 0:int(w * CORNER_W_FRAC)]
+    gray = cv2.cvtColor(corner, cv2.COLOR_BGR2GRAY)
+    return _binarize_ink(gray)
+
+
+def _extract_corner_glyph(card: np.ndarray, row_index: int, size: tuple[int, int], what: str) -> np.ndarray:
+    """コーナーの二値画像から、指定した行番号(0=ランク, 1=スート)の文字/マークを切り出す。"""
+    binary = _corner_binary(card)
+    rows = _glyph_rows(binary)
+    if len(rows) <= row_index:
+        raise CardNotFoundError(f"コーナーから{what}を検出できません(検出行数={len(rows)})")
+    return _normalize_glyph(binary, rows[row_index], size)
 
 
 def extract_rank_glyph(card: np.ndarray) -> np.ndarray:
     """正規化済みカード画像から、左上コーナーのランク文字(2値画像)を切り出す。"""
-    h, w = card.shape[:2]
-    corner = card[0:int(h * CORNER_H_FRAC), 0:int(w * CORNER_W_FRAC)]
-    gray = cv2.cvtColor(corner, cv2.COLOR_BGR2GRAY)
-    binary = _binarize_ink(gray)
-    rows = _glyph_rows(binary)
-    if not rows:
-        raise CardNotFoundError("コーナーからランク文字を検出できません")
-    return _normalize_glyph(binary, rows[0])
+    return _extract_corner_glyph(card, RANK_ROW_INDEX, GLYPH_SIZE, "ランク文字")
+
+
+def extract_suit_glyph(card: np.ndarray) -> np.ndarray:
+    """正規化済みカード画像から、左上コーナーのスートマーク(2値画像)を切り出す。"""
+    return _extract_corner_glyph(card, SUIT_ROW_INDEX, SUIT_GLYPH_SIZE, "スートマーク")
 
 
 # --- テンプレート管理 --------------------------------------------------------
 
 
 def configure(template_dir: Path) -> None:
-    """テンプレート元フォルダ(T)を変更し、キャッシュを破棄する。テスト/CLI用。"""
-    global _TEMPLATE_DIR, _TEMPLATE_CACHE
+    """テンプレート元フォルダ(T)を変更し、キャッシュ(ランク・スート両方)を破棄する。テスト/CLI用。"""
+    global _TEMPLATE_DIR, _TEMPLATE_CACHE, _SUIT_TEMPLATE_CACHE
     _TEMPLATE_DIR = Path(template_dir)
     _TEMPLATE_CACHE = None
+    _SUIT_TEMPLATE_CACHE = None
 
 
-def build_templates(template_dir: Path) -> dict[str, np.ndarray]:
-    """T セットから、ランクごとに文字画素の中央値を取ったテンプレートを作る。"""
+def _build_glyph_templates(
+    template_dir: Path,
+    extract_fn: Callable[[np.ndarray], np.ndarray],
+    label_of: Callable[[CardImage], str],
+    what: str,
+) -> dict[str, np.ndarray]:
+    """T セットから、ラベル(ランク or スート)ごとに文字/マーク画素の中央値を
+    取ったテンプレートを作る共通処理。extract_fn/label_of を差し替えるだけで
+    build_templates() (ランク) と build_suit_templates() (スート) の両方を
+    この1本の実装でまかなう(テンプレート作成方法そのものは変えていない)。
+    """
     items: list[CardImage] = load_dataset(template_dir)
-    glyphs_by_rank: dict[str, list[np.ndarray]] = {}
+    glyphs_by_label: dict[str, list[np.ndarray]] = {}
     skipped = 0
     for item in items:
         img = cv2.imread(str(item.path), cv2.IMREAD_COLOR)
@@ -180,22 +222,32 @@ def build_templates(template_dir: Path) -> dict[str, np.ndarray]:
             continue
         try:
             card = extract_card(img)
-            glyph = extract_rank_glyph(card)
+            glyph = extract_fn(card)
         except CardNotFoundError:
             skipped += 1
             continue
-        glyphs_by_rank.setdefault(item.rank, []).append(glyph)
+        glyphs_by_label.setdefault(label_of(item), []).append(glyph)
 
     templates: dict[str, np.ndarray] = {}
-    for rank, glyphs in glyphs_by_rank.items():
+    for label, glyphs in glyphs_by_label.items():
         stacked = np.stack(glyphs).astype(np.float32)
         med = np.median(stacked, axis=0)
         _, binary = cv2.threshold(med.astype(np.uint8), 127, 255, cv2.THRESH_BINARY)
-        templates[rank] = binary
+        templates[label] = binary
 
     if skipped:
-        print(f"  [警告] テンプレート作成時に {skipped} 枚をスキップしました(カード検出失敗)")
+        print(f"  [警告] {what}テンプレート作成時に {skipped} 枚をスキップしました(カード検出失敗)")
     return templates
+
+
+def build_templates(template_dir: Path) -> dict[str, np.ndarray]:
+    """T セットから、ランクごとのテンプレートを作る。"""
+    return _build_glyph_templates(template_dir, extract_rank_glyph, lambda item: item.rank, "ランク")
+
+
+def build_suit_templates(template_dir: Path) -> dict[str, np.ndarray]:
+    """T セットから、スートごとのテンプレートを作る。"""
+    return _build_glyph_templates(template_dir, extract_suit_glyph, lambda item: item.suit, "スート")
 
 
 def _get_templates() -> dict[str, np.ndarray]:
@@ -210,7 +262,28 @@ def _get_templates() -> dict[str, np.ndarray]:
     return _TEMPLATE_CACHE
 
 
+def _get_suit_templates() -> dict[str, np.ndarray]:
+    global _SUIT_TEMPLATE_CACHE
+    if _SUIT_TEMPLATE_CACHE is None:
+        if not _TEMPLATE_DIR.is_dir():
+            raise FileNotFoundError(
+                f"テンプレート元フォルダが見つかりません: {_TEMPLATE_DIR}\n"
+                "prepare_deck.py で撮影したT(テンプレート専用)画像をここに用意してください。"
+            )
+        _SUIT_TEMPLATE_CACHE = build_suit_templates(_TEMPLATE_DIR)
+    return _SUIT_TEMPLATE_CACHE
+
+
 # --- 公開インターフェース ----------------------------------------------------
+
+
+def _best_match(glyph: np.ndarray, templates: dict[str, np.ndarray]) -> str | None:
+    best_label, best_score = None, -1.0
+    for label, template in templates.items():
+        score = float(cv2.matchTemplate(glyph, template, cv2.TM_CCOEFF_NORMED)[0, 0])
+        if score > best_score:
+            best_label, best_score = label, score
+    return best_label
 
 
 def predict_rank(image_path: Path) -> str | None:
@@ -224,10 +297,23 @@ def predict_rank(image_path: Path) -> str | None:
         glyph = extract_rank_glyph(card)
     except CardNotFoundError:
         return None
+    return _best_match(glyph, templates)
 
-    best_rank, best_score = None, -1.0
-    for rank, template in templates.items():
-        score = float(cv2.matchTemplate(glyph, template, cv2.TM_CCOEFF_NORMED)[0, 0])
-        if score > best_score:
-            best_rank, best_score = rank, score
-    return best_rank
+
+def predict_suit(image_path: Path) -> str | None:
+    """カード写真1枚のスート(C/S/D/H)を判別する。判別できなければ None (UNKNOWN)。
+
+    predict_rank と同じ形の契約(classify_yolo.predict_suit と揃えている)。
+    行0(ランク)と行1(スート)が融合してしまったカードなど、コーナーから
+    スートマークを単独で切り出せない場合は None を返す。
+    """
+    templates = _get_suit_templates()
+    img = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    try:
+        card = extract_card(img)
+        glyph = extract_suit_glyph(card)
+    except CardNotFoundError:
+        return None
+    return _best_match(glyph, templates)

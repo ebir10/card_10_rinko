@@ -89,12 +89,8 @@ def parse_class_name(name: str) -> tuple[str, str]:
 # --- 公開インターフェース ----------------------------------------------------
 
 
-def predict_rank(image_path: Path) -> str | None:
-    """カード写真1枚のランクを判別する。検出0件なら None (UNKNOWN)。
-
-    1枚から複数検出(通常は左上・右下の2個)が返った場合は、
-    最も信頼度(confidence)が高い検出のクラスを採用する。
-    """
+def _predict_best_box(image_path: Path) -> tuple[str, str] | None:
+    """最高信頼度の検出1個を (スート, ランク) で返す。検出0件なら None。"""
     model = _get_model()
     result = model.predict(source=str(image_path), imgsz=IMGSZ, conf=CONF_THRESHOLD, verbose=False)[0]
 
@@ -104,5 +100,31 @@ def predict_rank(image_path: Path) -> str | None:
 
     best_idx = int(boxes.conf.argmax())  # 複数検出のうち最高信頼度を採用(注意点2)
     class_name = result.names[int(boxes.cls[best_idx])]
-    _suit, rank = parse_class_name(class_name)
+    return parse_class_name(class_name)
+
+
+def predict_rank(image_path: Path) -> str | None:
+    """カード写真1枚のランクを判別する。検出0件なら None (UNKNOWN)。
+
+    1枚から複数検出(通常は左上・右下の2個)が返った場合は、
+    最も信頼度(confidence)が高い検出のクラスを採用する。
+    """
+    result = _predict_best_box(image_path)
+    if result is None:
+        return None
+    _suit, rank = result
     return rank
+
+
+def predict_suit(image_path: Path) -> str | None:
+    """カード写真1枚のスート(C/S/D/H)を判別する。検出0件なら None (UNKNOWN)。
+
+    classify.predict_suit と同じ契約。このモデルのクラス名は元々
+    [ランク][スート] の1クラスなので、スートも実質ノーコストで取れる
+    (predict_rank 同様、最も信頼度が高い検出1個を採用する)。
+    """
+    result = _predict_best_box(image_path)
+    if result is None:
+        return None
+    suit, _rank = result
+    return suit
