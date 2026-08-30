@@ -300,3 +300,30 @@ E(52枚)を正解ラベルはそのままに画像処理で加工し、2種類�
   に置き換える、露出補正を前処理に挟む、といった対策が考えられるが
   未実装(今回はコードを変更せず、通常条件のパイプラインのまま難条件を
   評価した)。
+
+## §10. 難条件テストの実写化(進行中)
+
+§9の傾き・照明変化は画像処理による**合成**データだった。実際のカメラ・
+実際の手ブレ/照明でどうなるかを確認するため、E と同じ52枚構成を条件を
+変えて**実際に撮り直す**(合成版は削除せず、比較の参考として残す)。
+
+| セット | 内容 | 保存先 | 撮影 |
+|---|---|---|---|
+| 傾き(実写) | カードを意図的に傾けて撮影 | `data/deck_tilt_photo/` | セッション3 |
+| 照明変化(実写) | 52枚すべてを同じ明るめ照明で撮影 | `data/deck_light_photo/` | セッション4 |
+
+Tはセッション1のまま変更しない(合成版と同じ設計: 「通常条件のテンプレート/
+モデルが、難条件の実写にどこまで通用するか」を見る)。
+
+手順:
+```
+python prepare_deck.py --src data/photos_tilt_raw  --dst data/deck_tilt_photo  --apply
+python prepare_deck.py --src data/photos_light_raw --dst data/deck_light_photo --apply
+python tools/evaluate.py --engine both --deck-dir data/deck_tilt_photo  --save-json results/stress_test/comparison_tilt_photo.json
+python tools/evaluate.py --engine both --deck-dir data/deck_light_photo --save-json results/stress_test/comparison_light_photo.json
+```
+
+撮影・評価が完了次第、結果と「合成版と実写版で傾向は一致したか」の考察を
+本セクションに追記する。Webアプリ(`webapp/`)の「傾き」「照明変化」条件も、
+実写版データの準備が整い次第、合成版から実写版に切り替える
+(`webapp/backend/game.py` の `CONDITION_DIRS`)。
