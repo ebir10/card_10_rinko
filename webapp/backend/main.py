@@ -53,6 +53,23 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def no_cache(request, call_next):
+    """全レスポンスにキャッシュ無効ヘッダを付ける。
+
+    tilt/light の画像フォルダを合成版→実写版に差し替えたとき、URLパス
+    (/images/tilt/H10.png 等)自体は変わらないため、ブラウザが古い画像
+    (あるいは古い script.js/index.html)をキャッシュしたまま表示し続け、
+    「差し替えたのに一部だけ反映されない」という状態になったことがある。
+    このアプリはローカルの実験用で配信量も小さいため、キャッシュの効果より
+    実写・合成の差し替えの正確さを優先し、一律キャッシュを無効化する。
+    """
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
 @app.get("/api/draw")
 def api_draw(
     engine: str = Query("yolo", pattern="^(yolo|classical)$"),
