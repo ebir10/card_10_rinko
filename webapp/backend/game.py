@@ -19,12 +19,15 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from common import DEFAULT_DECK_DIR, PROJECT_ROOT, RANK_VALUE, load_dataset  # noqa: E402
 import make_ten  # noqa: E402
 
-# 撮影条件 -> 画像フォルダ。tilt/light は tools/make_stress_tests.py が
-# E(data/deck/)から合成生成したもの(ファイル名は共通、ラベルも同じ52枚)。
+# 撮影条件 -> 画像フォルダ。tilt/light はセッション3・4で実際に撮影した
+# 実写データ(data/deck_tilt_photo/, data/deck_light_photo/, ファイル名・
+# ラベルはEと共通の52枚)。合成版(tools/make_stress_tests.py生成)は
+# data/deck_tilt/, data/deck_light/ にそのまま残しており、COMPARE.md §9/§10
+# の比較記録として参照できる。
 CONDITION_DIRS: dict[str, Path] = {
     "normal": DEFAULT_DECK_DIR,
-    "tilt": PROJECT_ROOT / "data" / "deck_tilt",
-    "light": PROJECT_ROOT / "data" / "deck_light",
+    "tilt": PROJECT_ROOT / "data" / "deck_tilt_photo",
+    "light": PROJECT_ROOT / "data" / "deck_light_photo",
 }
 
 

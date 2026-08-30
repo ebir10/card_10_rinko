@@ -36,8 +36,10 @@ STRESS_DIR = RESULTS_DIR / "stress_test"
 
 CONDITIONS = [
     ("baseline", "通常(E)", RESULTS_DIR / "comparison.json", PROJECT_ROOT / "data" / "deck"),
-    ("tilt", "傾き", STRESS_DIR / "comparison_tilt.json", PROJECT_ROOT / "data" / "deck_tilt"),
-    ("light", "照明変化", STRESS_DIR / "comparison_light.json", PROJECT_ROOT / "data" / "deck_light"),
+    ("tilt", "傾き(合成)", STRESS_DIR / "comparison_tilt.json", PROJECT_ROOT / "data" / "deck_tilt"),
+    ("tilt_photo", "傾き(実写)", STRESS_DIR / "comparison_tilt_photo.json", PROJECT_ROOT / "data" / "deck_tilt_photo"),
+    ("light", "照明変化(合成)", STRESS_DIR / "comparison_light.json", PROJECT_ROOT / "data" / "deck_light"),
+    ("light_photo", "照明変化(実写)", STRESS_DIR / "comparison_light_photo.json", PROJECT_ROOT / "data" / "deck_light_photo"),
 ]
 SAMPLE_FILES = ["H10.png", "C08.png", "SK.png"]  # サンプル比較に使うカード
 ENGINE_JA = {
@@ -68,7 +70,7 @@ def make_samples_grid() -> None:
                 ax.set_title(label_ja, fontsize=13)
             if c == 0:
                 ax.set_ylabel(filename.replace(".png", ""), fontsize=11)
-    fig.suptitle("サンプル画像: 通常 / 傾き / 照明変化", fontsize=15)
+    fig.suptitle("サンプル画像: 通常 / 傾き(合成・実写) / 照明変化(合成・実写)", fontsize=15)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     out = STRESS_DIR / "samples_grid.png"
     fig.savefig(out, dpi=150)
@@ -84,7 +86,7 @@ def make_accuracy_chart(all_results: dict[str, dict[str, dict]]) -> None:
     x = np.arange(len(condition_keys))
     width = 0.35
 
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(9.5, 5.5))
     colors = {"classify (OpenCV template matching)": "#4c9f70", "classify_yolo": "#e4b73f"}
 
     for i, engine in enumerate(engines):
@@ -98,8 +100,8 @@ def make_accuracy_chart(all_results: dict[str, dict[str, dict]]) -> None:
     ax.set_ylim(0, 110)
     ax.set_ylabel("ランク正解率 (%)")
     ax.set_xticks(x)
-    ax.set_xticklabels(condition_labels)
-    ax.set_title("難条件による正解率の変化(全52枚)")
+    ax.set_xticklabels(condition_labels, rotation=10)
+    ax.set_title("難条件による正解率の変化(全52枚, 合成 vs 実写)")
     ax.axhline(100, color="gray", linewidth=0.5, linestyle="--")
     ax.legend()
     fig.tight_layout()
