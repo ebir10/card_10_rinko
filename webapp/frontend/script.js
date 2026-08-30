@@ -20,7 +20,9 @@ function renderCards(cards, condition) {
     div.className = "card";
 
     const img = document.createElement("img");
-    img.src = `/images/${condition}/${encodeURIComponent(card.filename)}`;
+    // 条件(tilt/light)を実写データに差し替えても画像パス自体は変わらないため、
+    // ブラウザキャッシュが古い画像を返し続けないようクエリでキャッシュを回避する。
+    img.src = `/images/${condition}/${encodeURIComponent(card.filename)}?v=${Date.now()}`;
     img.alt = card.filename;
     div.appendChild(img);
 
