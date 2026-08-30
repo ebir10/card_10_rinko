@@ -46,9 +46,22 @@ CARD_W, CARD_H = 400, 560          # カードを射影変換した後の正規�
 CORNER_W_FRAC = 0.17               # コーナー領域の幅(カード幅に対する割合)
 CORNER_H_FRAC = 0.30               # コーナー領域の高さ
 MIN_GLYPH_AREA = 20                # 文字とみなす輪郭の最小面積(px)
+MIN_GLYPH_WIDTH = 15               # 文字とみなす輪郭の最小幅(px)。
+                                    # クラブ系の一部のカード(C08/C04/CKなど)は、コーナー
+                                    # クロップの右端に中央ピップの切れ端が幅8px程度のノイズ
+                                    # 輪郭として写り込み、ランク行とスート行の間を橋渡しして
+                                    # 誤って1行に融合させる原因になっていた。実測した本物の
+                                    # 文字幅(36px以上)より十分小さい閾値でこのノイズだけを除く。
 MAX_GLYPH_HEIGHT_FRAC = 0.6        # 文字とみなす輪郭の最大高さ(コーナー高さに対する割合)。
                                     # 絵札の枠線などコーナーの縦幅いっぱいに伸びる装飾線を除外する
-ROW_GAP_TOL = 6                    # 同じ行とみなすy方向の許容ギャップ(px)
+ROW_GAP_TOL = 2                    # 同じ行とみなすy方向の許容ギャップ(px)。
+                                    # 以前は6pxだったが、Q(絵札)はランク文字の裾とスート
+                                    # マークの間隔が実測4〜6pxしかなく、6pxだと2つが1行に
+                                    # 融合してランク文字にスートマークが混入してしまっていた
+                                    # (T・E各52枚で実測し、0〜2pxなら全カードが正しく2行に
+                                    # 分離できることを確認済み)。文字内の複数輪郭(例: "10"の
+                                    # "1"と"0")はy範囲が重なる=ギャップが負なので、この値を
+                                    # 下げても同じ行として結合され続ける。
 GLYPH_SIZE = (48, 64)              # ランクをテンプレート化する際の統一サイズ (w,h)。数字/文字は縦長。
 SUIT_GLYPH_SIZE = (48, 48)         # スートマークをテンプレート化する際の統一サイズ (w,h)。
                                     # ハート/ダイヤ/クラブ/スペードは実測でおよそ正方形に近いため
@@ -134,7 +147,7 @@ def _glyph_rows(binary: np.ndarray) -> list[list[tuple[int, int, int, int]]]:
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     max_h = binary.shape[0] * MAX_GLYPH_HEIGHT_FRAC
     all_boxes = (cv2.boundingRect(c) for c in contours if cv2.contourArea(c) >= MIN_GLYPH_AREA)
-    boxes = [b for b in all_boxes if b[3] <= max_h]
+    boxes = [b for b in all_boxes if b[3] <= max_h and b[2] >= MIN_GLYPH_WIDTH]
     if not boxes:
         return []
     boxes.sort(key=lambda b: b[1])
